@@ -4,10 +4,20 @@ import { useEffect, useState } from "react";
 
 export default function ClockWidget() {
   const [now, setNow] = useState(new Date());
+  const [name, setName] = useState<string | null>(null);
 
   useEffect(() => {
     const timer = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    fetch("/api/profile")
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.name) setName(data.name);
+      })
+      .catch(() => {});
   }, []);
 
   const time = now.toLocaleTimeString("en-US", {
@@ -31,7 +41,7 @@ export default function ClockWidget() {
   return (
     <div className="card col-span-2">
       <p className="text-sm font-medium text-indigo-500 uppercase tracking-widest mb-1">
-        {greeting} ☀️
+        Hey Salaams {greeting} ☀️{name ? ` ${name}!` : "!"}
       </p>
       <h1 className="text-6xl font-bold text-gray-900 tabular-nums tracking-tight">
         {time}

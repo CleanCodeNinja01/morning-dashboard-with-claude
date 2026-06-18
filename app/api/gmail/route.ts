@@ -1,47 +1,64 @@
 import { NextResponse } from "next/server";
+import { getGmailClient } from "@/lib/gmail";
 
-// TODO: Wire up Gmail OAuth
-// Required env vars (see .env.local.example):
-//   GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, GMAIL_REFRESH_TOKEN, GMAIL_USER_EMAIL
-//
-// Steps to get credentials:
-//   1. Go to https://console.cloud.google.com → New Project
-//   2. Enable "Gmail API"
-//   3. Create OAuth 2.0 credentials (Desktop app type)
-//   4. Run the one-time auth flow to get a refresh token
-//   5. Add values to .env.local
+function parseFrom(raw: string): { name: string; email: string } {
+  const match = raw.match(/^(.+?)\s*<(.+?)>$/);
+  if (match) return { name: match[1].replace(/"/g, ""), email: match[2] };
+  return { name: raw, email: raw };
+}
 
-const MOCK_EMAILS = [
-  {
-    id: "1",
-    from: "Sarah Ahmed",
-    email: "sarah@launchgood.com",
-    subject: "Q3 Campaign Review — Action needed",
-    preview: "Hey, can you take a look at the slides before our 2pm call? I've updated the...",
-    time: "8:14 AM",
-    read: false,
-  },
-  {
-    id: "2",
-    from: "GitHub",
-    email: "noreply@github.com",
-    subject: "[launchgood/rebuild] PR #412 merged",
-    preview: "fix(api): scale up rest-api-facade CPU was merged by CleanCodeNinja01.",
-    time: "7:52 AM",
-    read: true,
-  },
-  {
-    id: "3",
-    from: "Notion",
-    email: "notification@notion.so",
-    subject: "Omar mentioned you in a comment",
-    preview: "@saleha can you update the roadmap doc with the new launch date? Thanks!",
-    time: "7:30 AM",
-    read: false,
-  },
-];
+function formatTime(internalDate: string): string {
+  const date = new Date(parseInt(internalDate));
+  const now = new Date();
+  const isToday = date.toDateString() === now.toDateString();
+  return isToday
+    ? date.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: true })
+    : date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
 
 export async function GET() {
-  // When Gmail is wired up, replace this with real API call using googleapis
-  return NextResponse.json(MOCK_EMAILS);
+  try {
+    const gmail = getGmailClient();
+
+    const list = await gmail.users.messages.list({
+      userId: "me",
+      maxResults: 8,
+      labelIds: ["INBOX"],
+    });
+
+    const messages = list.data.messages ?? [];
+
+    const emails = await Promise.all(
+      messages.map(async (msg) => {
+        const detail = await gmail.users.messages.get({
+          userId: "me",
+          id: msg.id!,
+          format: "metadata",
+          metadataHeaders: ["From", "Subject"],
+        });
+
+        const headers = detail.data.payload?.headers ?? [];
+        const rawFrom = headers.find((h) => h.name === "From")?.value ?? "";
+        const subject = headers.find((h) => h.name === "Subject")?.value ?? "(no subject)";
+        const { name, email } = parseFrom(rawFrom);
+        const snippet = detail.data.snippet ?? "";
+        const isUnread = detail.data.labelIds?.includes("UNREAD") ?? false;
+
+        return {
+          id: msg.id,
+          from: name,
+          email,
+          subject,
+          preview: snippet,
+          time: formatTime(detail.data.internalDate ?? "0"),
+          read: !isUnread,
+        };
+      })
+    );
+
+    return NextResponse.json(emails);
+  } catch (err) {
+    console.error("Gmail API error:", err);
+    return NextResponse.json({ error: "Failed to fetch emails" }, { status: 500 });
+  }
 }

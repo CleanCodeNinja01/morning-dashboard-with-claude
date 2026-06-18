@@ -14,4 +14,8 @@ body {
   .widget-label {
     @apply text-xs font-semibold text-gray-400 uppercase tracking-widest mb-3;
   }
+
+  .font-arabic-quran {
+    font-family: var(--font-arabic-quran), "Scheherazade New", "Amiri", serif;
+  }
 }
