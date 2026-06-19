@@ -10,13 +10,17 @@ interface Habit {
   done: boolean;
 }
 
-const HABIT_KEY = "morning_habits_v3";
-const HABIT_DATE = "morning_habits_date";
+const HABITS_KEY = "morning_habits_v4";
+const HABITS_DATE_KEY = "morning_habits_date";
+const NEXT_ID_KEY = "morning_habits_next_id";
 
-const DEFAULT_HABITS: Habit[] = [
-  { id: 1, label: "Exercise", icon: "🤸", streak: 5, done: false },
-  { id: 2, label: "Read",     icon: "📖", streak: 7, done: false },
-];
+const SEED_HABIT: Habit = {
+  id: 1,
+  label: "Exercise",
+  icon: "🤸",
+  streak: 0,
+  done: false,
+};
 
 function flameColor(streak: number) {
   if (streak >= 10) return "text-orange-500 font-bold";
@@ -24,32 +28,53 @@ function flameColor(streak: number) {
   return "text-gray-400";
 }
 
-function loadHabits(): Habit[] {
-  if (typeof window === "undefined") return DEFAULT_HABITS;
-  const date = localStorage.getItem(HABIT_DATE);
-  if (date !== new Date().toDateString()) return DEFAULT_HABITS;
+function loadHabits(): { habits: Habit[]; nextId: number } {
+  if (typeof window === "undefined") {
+    return { habits: [SEED_HABIT], nextId: 2 };
+  }
+
+  const today = new Date().toDateString();
+  const savedDate = localStorage.getItem(HABITS_DATE_KEY);
+
   try {
-    const saved = JSON.parse(localStorage.getItem(HABIT_KEY) ?? "");
-    return saved as Habit[];
-  } catch { return DEFAULT_HABITS; }
+    const saved = localStorage.getItem(HABITS_KEY);
+    const nextId = parseInt(localStorage.getItem(NEXT_ID_KEY) ?? "2");
+
+    if (saved) {
+      let habits = JSON.parse(saved) as Habit[];
+      if (Array.isArray(habits) && habits.length > 0) {
+        if (savedDate !== today) {
+          habits = habits.map((h) => ({ ...h, done: false }));
+        }
+        const maxId = Math.max(...habits.map((h) => h.id));
+        return { habits, nextId: Math.max(nextId, maxId + 1) };
+      }
+    }
+  } catch {
+    // fall through to seed
+  }
+
+  return { habits: [SEED_HABIT], nextId: 2 };
 }
 
-function saveHabits(habits: Habit[]) {
-  localStorage.setItem(HABIT_DATE, new Date().toDateString());
-  localStorage.setItem(HABIT_KEY, JSON.stringify(habits));
+function saveHabits(habits: Habit[], nextId: number) {
+  localStorage.setItem(HABITS_DATE_KEY, new Date().toDateString());
+  localStorage.setItem(HABITS_KEY, JSON.stringify(habits));
+  localStorage.setItem(NEXT_ID_KEY, String(nextId));
 }
-
-let nextId = DEFAULT_HABITS.length + 1;
 
 export default function HabitTrackerWidget() {
-  const [habits, setHabits] = useState<Habit[]>(DEFAULT_HABITS);
+  const [habits, setHabits] = useState<Habit[]>([SEED_HABIT]);
+  const [nextId, setNextId] = useState(2);
   const [adding, setAdding] = useState(false);
   const [newLabel, setNewLabel] = useState("");
   const [newIcon, setNewIcon] = useState("⭐");
   const addRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    setHabits(loadHabits());
+    const { habits: loaded, nextId: id } = loadHabits();
+    setHabits(loaded);
+    setNextId(id);
   }, []);
 
   useEffect(() => {
@@ -65,17 +90,19 @@ export default function HabitTrackerWidget() {
       );
       // Sort: pending first, done last
       const sorted = [...next.filter((h) => !h.done), ...next.filter((h) => h.done)];
-      saveHabits(sorted);
+      saveHabits(sorted, nextId);
       return sorted;
     });
   }
 
   function addHabit() {
     if (!newLabel.trim()) { setAdding(false); return; }
-    const habit: Habit = { id: nextId++, label: newLabel.trim(), icon: newIcon, streak: 0, done: false };
+    const habit: Habit = { id: nextId, label: newLabel.trim(), icon: newIcon, streak: 0, done: false };
+    const id = nextId + 1;
+    setNextId(id);
     setHabits((prev) => {
       const next = [habit, ...prev.filter((h) => !h.done), ...prev.filter((h) => h.done)];
-      saveHabits(next);
+      saveHabits(next, id);
       return next;
     });
     setNewLabel("");
@@ -85,7 +112,7 @@ export default function HabitTrackerWidget() {
   function removeHabit(id: number) {
     setHabits((prev) => {
       const next = prev.filter((h) => h.id !== id);
-      saveHabits(next);
+      saveHabits(next, nextId);
       return next;
     });
   }

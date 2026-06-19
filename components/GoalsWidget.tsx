@@ -10,12 +10,10 @@ interface Goal {
   text: string;
   period: Period;
   progress: number;
-  target: number;
-  unit: string;
   tab: Tab;
 }
 
-const GOALS_KEY = "morning_goals_v1";
+const GOALS_KEY = "morning_goals_v2";
 
 const PERIOD_STYLES: Record<Period, { bg: string; text: string; label: string }> = {
   daily:   { bg: "bg-indigo-100",  text: "text-indigo-700",  label: "DAILY"   },
@@ -31,21 +29,40 @@ const PERIOD_BAR: Record<Period, string> = {
   yearly:  "bg-rose-500",
 };
 
-const DEFAULT_GOALS: Goal[] = [
-  { id: 1, text: "Read 30 min", period: "daily", progress: 0, target: 30, unit: "min", tab: "short" },
-];
+const SEED_GOAL: Goal = {
+  id: 1,
+  text: "Read 30 min",
+  period: "daily",
+  progress: 0,
+  tab: "short",
+};
+
+function normalizeGoal(raw: Partial<Goal> & { target?: number }): Goal {
+  const period = raw.period ?? "daily";
+  let progress = raw.progress ?? 0;
+  if (raw.target && raw.target > 0 && progress <= raw.target) {
+    progress = Math.round((progress / raw.target) * 100);
+  }
+  return {
+    id: raw.id!,
+    text: raw.text ?? "",
+    period,
+    progress: Math.min(100, Math.max(0, progress)),
+    tab: raw.tab ?? tabForPeriod(period),
+  };
+}
 
 function tabForPeriod(period: Period): Tab {
   return period === "daily" || period === "weekly" ? "short" : "long";
 }
 
 function loadGoals(): Goal[] {
-  if (typeof window === "undefined") return DEFAULT_GOALS;
+  if (typeof window === "undefined") return [SEED_GOAL];
   try {
-    const saved = JSON.parse(localStorage.getItem(GOALS_KEY) ?? "");
-    if (Array.isArray(saved) && saved.length > 0) return saved as Goal[];
+    const saved = JSON.parse(localStorage.getItem(GOALS_KEY) ?? localStorage.getItem("morning_goals_v1") ?? "");
+    if (Array.isArray(saved) && saved.length > 0) return saved.map(normalizeGoal);
   } catch { /* use defaults */ }
-  return DEFAULT_GOALS;
+  return [SEED_GOAL];
 }
 
 function saveGoals(goals: Goal[]) {
@@ -58,15 +75,18 @@ function nextGoalId(goals: Goal[]) {
 
 export default function GoalsWidget() {
   const [tab, setTab] = useState<Tab>("short");
-  const [goals, setGoals] = useState<Goal[]>(DEFAULT_GOALS);
+  const [goals, setGoals] = useState<Goal[]>([SEED_GOAL]);
   const [adding, setAdding] = useState(false);
   const [newText, setNewText] = useState("");
   const [newPeriod, setNewPeriod] = useState<Period>("daily");
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editText, setEditText] = useState("");
   const [editPeriod, setEditPeriod] = useState<Period>("daily");
+  const [editingProgressId, setEditingProgressId] = useState<number | null>(null);
+  const [editProgress, setEditProgress] = useState("");
   const addRef = useRef<HTMLInputElement>(null);
   const editRef = useRef<HTMLInputElement>(null);
+  const progressRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     setGoals(loadGoals());
@@ -79,6 +99,10 @@ export default function GoalsWidget() {
   useEffect(() => {
     if (editingId !== null) editRef.current?.focus();
   }, [editingId]);
+
+  useEffect(() => {
+    if (editingProgressId !== null) progressRef.current?.focus();
+  }, [editingProgressId]);
 
   function persist(updated: Goal[]) {
     setGoals(updated);
@@ -97,13 +121,28 @@ export default function GoalsWidget() {
         text: newText.trim(),
         period,
         progress: 0,
-        target: 100,
-        unit: "% done",
         tab: tabForPeriod(period),
       },
     ]);
     setNewText("");
     setAdding(false);
+  }
+
+  function updateProgress(id: number, progress: number) {
+    const clamped = Math.min(100, Math.max(0, Math.round(progress)));
+    persist(goals.map((g) => (g.id === id ? { ...g, progress: clamped } : g)));
+  }
+
+  function startEditProgress(goal: Goal) {
+    setEditingProgressId(goal.id);
+    setEditProgress(String(goal.progress));
+  }
+
+  function saveProgressEdit() {
+    if (editingProgressId === null) return;
+    const value = parseInt(editProgress, 10);
+    if (!Number.isNaN(value)) updateProgress(editingProgressId, value);
+    setEditingProgressId(null);
   }
 
   function removeGoal(id: number) {
@@ -224,10 +263,11 @@ export default function GoalsWidget() {
         )}
 
         {visible.map((goal) => {
-          const pct = Math.min(100, Math.round((goal.progress / goal.target) * 100));
+          const pct = goal.progress;
           const ps = PERIOD_STYLES[goal.period];
           const bar = PERIOD_BAR[goal.period];
           const isEditing = editingId === goal.id;
+          const isEditingProgress = editingProgressId === goal.id;
 
           if (isEditing) {
             return (
@@ -280,7 +320,30 @@ export default function GoalsWidget() {
                   <p className="text-xs font-medium text-gray-800 truncate">{goal.text}</p>
                 </div>
                 <div className="flex items-center gap-1.5 flex-shrink-0">
-                  <span className="text-xs font-semibold text-gray-600">{pct}%</span>
+                  {isEditingProgress ? (
+                    <input
+                      ref={progressRef}
+                      type="number"
+                      min={0}
+                      max={100}
+                      value={editProgress}
+                      onChange={(e) => setEditProgress(e.target.value)}
+                      onBlur={saveProgressEdit}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") saveProgressEdit();
+                        if (e.key === "Escape") setEditingProgressId(null);
+                      }}
+                      className="w-10 text-xs text-right border border-indigo-200 rounded px-1 py-0.5 outline-none focus:border-indigo-400 bg-white text-gray-800"
+                    />
+                  ) : (
+                    <button
+                      onClick={() => startEditProgress(goal)}
+                      className="text-xs font-semibold text-gray-600 hover:text-indigo-600 tabular-nums"
+                      title="Update progress"
+                    >
+                      {pct}%
+                    </button>
+                  )}
                   <button
                     onClick={() => startEdit(goal)}
                     className="opacity-0 group-hover:opacity-100 transition-opacity text-gray-300 hover:text-indigo-500 text-xs leading-none"
@@ -297,15 +360,21 @@ export default function GoalsWidget() {
                   </button>
                 </div>
               </div>
-              <div className="w-full bg-gray-200 rounded-full h-1.5">
+              <div className="w-full bg-gray-200 rounded-full h-1.5 mb-2">
                 <div
                   className={`${bar} h-1.5 rounded-full transition-all duration-500`}
                   style={{ width: `${pct}%` }}
                 />
               </div>
-              <p className="text-xs text-gray-400 mt-1">
-                {goal.progress} {goal.unit}
-              </p>
+              <input
+                type="range"
+                min={0}
+                max={100}
+                value={pct}
+                onChange={(e) => updateProgress(goal.id, parseInt(e.target.value, 10))}
+                className="w-full h-1 accent-indigo-500 cursor-pointer"
+                aria-label={`Progress for ${goal.text}`}
+              />
             </div>
           );
         })}
